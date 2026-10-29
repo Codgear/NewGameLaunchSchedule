@@ -76,7 +76,28 @@ const GAMEPLAY_POOL = [
     note: "小体量生存解谜" },
   { id: "g14", name: "霓虹街区",   type: "story",   quality: 0.85, readiness: 0.71, expo: 640000, cvrDownload: 0.057, cvrJoin: 0.53,
     tags: ["剧情", "开放世界", "都市", "硬核"],
-    note: "未达上线门槛（就绪度 < 0.75）" }
+    note: "未达上线门槛（就绪度 < 0.75）" },
+  { id: "g15", name: "时速对决",   type: "pvp",     quality: 0.73, readiness: 0.91, expo: 470000, cvrDownload: 0.047, cvrJoin: 0.43,
+    tags: ["竞技", "竞速", "快节奏"],
+    note: "轻竞速，与极限竞速同簇" },
+  { id: "g16", name: "荒星拓殖",   type: "coop",    quality: 0.76, readiness: 0.89, expo: 540000, cvrDownload: 0.046, cvrJoin: 0.51,
+    tags: ["生存", "建造", "科幻", "开放世界"],
+    note: "科幻生存建造，与荒原协议部分重叠" },
+  { id: "g17", name: "方块拼拼",   type: "casual",  quality: 0.71, readiness: 0.95, expo: 690000, cvrDownload: 0.066, cvrJoin: 0.59,
+    tags: ["休闲", "解谜", "单局短"],
+    note: "超轻量益智，泛用户友好" },
+  { id: "g18", name: "雾港迷雾",   type: "story",   quality: 0.80, readiness: 0.87, expo: 410000, cvrDownload: 0.050, cvrJoin: 0.54,
+    tags: ["剧情", "悬疑", "解谜"],
+    note: "悬疑叙事，与长夜列车同簇" },
+  { id: "g19", name: "星宠计划",   type: "collect", quality: 0.75, readiness: 0.92, expo: 600000, cvrDownload: 0.052, cvrJoin: 0.56,
+    tags: ["收集", "养成", "科幻", "社交"],
+    note: "宠物养成，长线留存型" },
+  { id: "g20", name: "街机擂台",   type: "pvp",     quality: 0.68, readiness: 0.84, expo: 520000, cvrDownload: 0.045, cvrJoin: 0.40,
+    tags: ["竞技", "快节奏", "单局短"],
+    note: "格斗街机，硬核度偏高" },
+  { id: "g21", name: "云顶牧场",   type: "casual",  quality: 0.77, readiness: 0.93, expo: 480000, cvrDownload: 0.060, cvrJoin: 0.62,
+    tags: ["休闲", "养成", "社交"],
+    note: "轻经营，与小镇物语重叠" }
 ];
 
 /* 打标数据里的显式竞争覆盖（人工/算法标注的强冲突对） */

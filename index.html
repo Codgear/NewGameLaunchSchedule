@@ -32,21 +32,26 @@
     <!-- ======= 左：入参 ======= -->
     <aside class="panel inputs">
 
-      <!-- 1. 目标日期 -->
+      <!-- 1. 上架节奏 -->
       <section class="card">
-        <h2><i>01</i>目标上架日期 <span class="tag-manual">手动输入</span></h2>
+        <h2><i>01</i>专区上架节奏 <span class="tag-manual">手动输入</span></h2>
         <div class="row">
           <label>首个上架日</label>
           <input type="date" id="launchDate" />
         </div>
         <div class="row">
-          <label>排期窗口（天）</label>
-          <input type="number" id="windowDays" min="1" max="60" value="14" />
+          <label>规划周数</label>
+          <input type="number" id="weeks" min="1" max="12" value="4" />
         </div>
         <div class="row">
-          <label>同簇最小间隔（天）</label>
-          <input type="number" id="minGap" min="1" max="30" value="5" />
+          <label>专区槽位（同时在池）</label>
+          <input type="number" id="slotCap" min="2" max="40" value="12" />
         </div>
+        <div class="row">
+          <label>人均专区曝光（次/日）</label>
+          <input type="number" id="zoneExpo" min="0.2" max="10" step="0.2" value="3.2" />
+        </div>
+        <p class="hint">固定每周三 10:00 同时上架一批，每批在专区曝光 <b>14 天</b> 后退池 → 任意时刻在池 = 本周批 + 上周批，因此单批上限 = ⌊槽位 / 2⌋。</p>
       </section>
 
       <!-- 2. DAU -->
@@ -108,21 +113,21 @@
       <section class="card hero-card">
         <div class="hero-grid">
           <div class="hero-main">
-            <p class="eyebrow">模型建议</p>
+            <p class="eyebrow">模型建议 · 每周三上架</p>
             <div class="hero-kpi">
               <span class="kpi-num" id="kpiCount">—</span>
-              <span class="kpi-unit">个新玩法</span>
+              <span class="kpi-unit">个 / 周</span>
             </div>
             <p class="hero-desc" id="heroDesc">等待运行模型…</p>
           </div>
           <div class="hero-side">
             <div class="mini">
-              <span>有效新进 / 日</span>
+              <span>累计有效新进</span>
               <b id="kpiNew">—</b>
             </div>
             <div class="mini">
-              <span>注意力占用</span>
-              <b id="kpiLoad">—</b>
+              <span>在池峰值</span>
+              <b id="kpiPool">—</b>
             </div>
             <div class="mini">
               <span>平均倾轧损耗</span>
@@ -135,17 +140,17 @@
           </div>
         </div>
         <div class="verdict" id="verdict"></div>
-        <p class="hint">口径：覆盖达成度 =「每类玩法日常需求的 20% 由新内容承接」的达成比例；注意力占用 = 组合占「新内容可争夺时长池」的比例；倾轧损耗 = 同类型/受众重叠导致的分流比例。</p>
+        <p class="hint">口径：有效新进只计「参与」玩家（曝光→下载→参与），7 天为周口径；倾轧损耗 = 同时在池的同类型/受众重叠玩法导致的分流；覆盖达成度 = 相对「每类玩法需求的 6% 由新内容承接」这一理想供给水平的实现比例。</p>
       </section>
 
       <section class="card">
-        <h2><i>①</i>最优解搜索：为什么不是更多 / 不是更少</h2>
+        <h2><i>①</i>最优解搜索：每周上几个</h2>
         <div class="chart-wrap">
           <canvas id="curveChart" height="240"></canvas>
         </div>
         <div class="chart-legend">
           <span><i class="c1"></i>综合效用</span>
-          <span><i class="c2"></i>新增有效新进</span>
+          <span><i class="c2"></i>累计有效新进</span>
           <span><i class="c3"></i>拥挤损耗 + 覆盖缺口</span>
           <span class="opt-mark">▲ 最优点</span>
         </div>
@@ -154,12 +159,12 @@
       </section>
 
       <section class="card">
-        <h2><i>②</i>推荐玩法组合</h2>
+        <h2><i>②</i>每周玩法组合（周三批次）</h2>
         <div id="comboList" class="combo-list"></div>
       </section>
 
       <section class="card">
-        <h2><i>③</i>三层漏斗拆解（曝光 → 下载 → 参与）</h2>
+        <h2><i>③</i>稳态周三层漏斗（曝光 → 下载 → 参与）</h2>
         <div class="funnel-wrap">
           <div class="funnel-sum" id="funnelSum"></div>
           <div class="funnel-bars" id="funnelBars"></div>
@@ -167,18 +172,18 @@
       </section>
 
       <section class="card">
-        <h2><i>④</i>上架节奏排期</h2>
-        <div class="timeline" id="timeline"></div>
-        <p class="hint">按竞争强度做图着色分批：同簇玩法不放在同一批，且间隔不小于设定的最小天数。</p>
+        <h2><i>④</i>专区在池甘特（14 天留存退池）</h2>
+        <div id="timeline"></div>
+        <p class="hint">实心 = 上架首周（全量曝光）；浅色 = 在池第 2 周（新鲜度衰减，第 14 天退池）。每周三新批与上周批同时在线，倾轧就发生在这 7 天重叠期。</p>
       </section>
 
     </main>
   </div>
 
   <footer class="foot">
-    目标函数 max&nbsp;[&nbsp;Σ 有效新进 × 品质权重 − λ · 覆盖缺口惩罚&nbsp;] &nbsp;|&nbsp;
-    约束：Σ曝光 ≤ 曝光位池、Σ注意力时长 ≤ 新内容时长池、同簇竞争 ≤ 分批隔离
-    <br/>Demo · 数据为模拟数据（真实接入：DAU/分层/打标由数仓返回，玩法与漏斗由使用者录入）· 求解：贪心构造 + 局部交换
+    目标函数 max Σ<sub>周</sub>&nbsp;[&nbsp;Σ 有效新进 × 品质权重 − λ · 覆盖缺口惩罚&nbsp;] &nbsp;|&nbsp;
+    约束：本周批 + 上周批 ≤ 专区槽位、单周曝光需求 ≤ 专区曝光池、14 天到期退池
+    <br/>Demo · 数据为模拟数据（真实接入：DAU/分层/打标由数仓返回，玩法与漏斗由使用者录入）· 求解：按周滚动贪心 + 局部交换
   </footer>
 </div>
 

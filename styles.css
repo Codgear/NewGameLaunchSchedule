@@ -242,4 +242,32 @@ input[type="range"]::-webkit-slider-thumb{
 .tl-game{font-size:11px;background:rgba(124,108,245,.13);border:1px solid rgba(124,108,245,.3);border-radius:8px;padding:5px 10px;display:flex;align-items:center;gap:6px}
 .tl-game span{color:var(--dim2);font-size:10px}
 .tl-out{opacity:.42}
+
+/* ---------- 周批次 ---------- */
+.wk{background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:10px}
+.wk-head{display:flex;align-items:center;gap:10px;font-size:11.5px;color:var(--dim);margin-bottom:10px}
+.wk-date{color:#fff;font-weight:650;font-variant-numeric:tabular-nums}
+.wk-idx{font-size:10px;padding:2px 8px;border-radius:20px;background:rgba(124,108,245,.16);color:#b8b0ff;border:1px solid rgba(124,108,245,.32)}
+.wk-n{margin-left:auto;color:var(--dim2);font-variant-numeric:tabular-nums}
+.wk-games{display:flex;flex-wrap:wrap;gap:8px}
+.wk-chip{display:flex;flex-direction:column;gap:1px;padding:6px 11px;border-radius:9px;font-size:11.5px;line-height:1.35}
+.wk-chip b{font-weight:600}
+.wk-chip em{font-style:normal;font-size:9.5px;color:var(--dim2)}
+.wk-chip.new{background:rgba(61,220,151,.11);border:1px solid rgba(61,220,151,.34)}
+.wk-chip.old{background:rgba(255,255,255,.035);border:1px dashed rgba(255,255,255,.16);opacity:.85}
+.wk-meta{display:flex;flex-wrap:wrap;gap:14px;font-size:10.5px;color:var(--dim2);margin-top:10px;padding-top:9px;border-top:1px dashed rgba(255,255,255,.07)}
+.wk-meta b{font-variant-numeric:tabular-nums}
+.wk-meta .down{color:#ff6b8a}.wk-meta .up{color:#3ddc97}
+.warn{color:#f7b955;font-size:10px}
+
+/* ---------- 甘特 ---------- */
+.gantt{display:grid;gap:5px;font-size:11px;overflow-x:auto;width:100%}
+.gantt .gh{font-size:10px;color:var(--dim);padding-bottom:4px;border-bottom:1px solid rgba(255,255,255,.07)}
+.gantt .gh b{display:block;color:#dfe5f5;font-size:10.5px}
+.gantt .gh em{font-style:normal;color:var(--dim2);font-size:9.5px}
+.gantt .gn{display:flex;align-items:center;gap:7px;color:#cfd6e6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gantt .gn i{width:7px;height:7px;border-radius:50%;flex:0 0 auto}
+.gantt .gc{height:24px;min-width:34px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:10px;color:transparent}
+.gantt .gc.new{background:linear-gradient(135deg,rgba(61,220,151,.3),rgba(61,220,151,.14));border:1px solid rgba(61,220,151,.42);color:#8ff0c4}
+.gantt .gc.old{background:rgba(255,255,255,.045);border:1px dashed rgba(255,255,255,.16);color:var(--dim2)}
 .foot{text-align:center;color:var(--dim2);font-size:10.5px;margin-top:26px}

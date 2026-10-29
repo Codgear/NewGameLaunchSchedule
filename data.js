@@ -109,3 +109,55 @@ const COMP_OVERRIDE = {
   "g05|g08": 0.78,
   "g02|g07": 0.74
 };
+
+/* =========================================================
+ * 人群名单层（真实环境：画像平台 / 名单服务返回玩家 ID 集合）
+ * ========================================================= */
+
+/* 大盘口径 */
+const AUDIENCE = {
+  universeN: 200000,     // 模拟玩家宇宙（分层抽样，代表全量 MAU 玩家，用于名单级重叠计算）
+  mauTotal: 1720000,     // 近 3 个月去重月活（MAU）
+  windowLabel: "目标周期（规划周数 × 7 天）"
+};
+
+/* 已上线玩法的留存玩家（近 14 天活跃）
+ * reach  = 该玩法历史玩家占 MAU 比例（由宇宙生成时模拟）
+ * retain = 其中近 14 天仍活跃的留存率 → 留存玩家名单 */
+const LIVE_GAMES = [
+  { id: "L01", name: "王座之争",   type: "pvp",     tags: ["竞技", "团队", "排位", "快节奏"],        reach: 0.34, retain: 0.66 },
+  { id: "L02", name: "决胜时刻",   type: "pvp",     tags: ["竞技", "战术", "硬核", "团队"],          reach: 0.22, retain: 0.58 },
+  { id: "L03", name: "开心农场主", type: "casual",  tags: ["休闲", "养成", "建造", "社交"],          reach: 0.30, retain: 0.52 },
+  { id: "L04", name: "迷城故事",   type: "story",   tags: ["剧情", "悬疑", "解谜"],                  reach: 0.17, retain: 0.44 },
+  { id: "L05", name: "星球计划",   type: "collect", tags: ["收集", "养成", "科幻", "社交"],          reach: 0.19, retain: 0.57 },
+  { id: "L06", name: "荒野求生",   type: "coop",    tags: ["生存", "建造", "开放世界", "团队"],      reach: 0.15, retain: 0.49 },
+  { id: "L07", name: "极速狂飙",   type: "pvp",     tags: ["竞速", "竞技", "快节奏"],                reach: 0.11, retain: 0.41 },
+  { id: "L08", name: "消消乐国",   type: "casual",  tags: ["休闲", "解谜", "单局短"],                reach: 0.38, retain: 0.47 }
+];
+
+/* 待上架玩法的灰度数据 + 人工标注竞品 + 周期获客目标
+ * gray.participants = 灰度期累计去重参与玩家数（画像原型来源）
+ * rivals = 人工标注的竞品玩法 ID（可含已上线 L0x 与待上架 g0x） */
+const AUDIENCE_INPUT = {
+  g01: { goalNew: 38000, gray: { days: 21, expo: 268000, participants: 9800 },  rivals: ["L01", "L02", "g09", "g06"] },
+  g02: { goalNew: 24000, gray: { days: 21, expo: 205000, participants: 6100 },  rivals: ["L06", "g07", "g16"] },
+  g03: { goalNew: 44000, gray: { days: 28, expo: 412000, participants: 18400 }, rivals: ["L08", "L03", "g12", "g17"] },
+  g04: { goalNew: 18000, gray: { days: 21, expo: 168000, participants: 4300 },  rivals: ["L04", "g18", "g10"] },
+  g05: { goalNew: 36000, gray: { days: 28, expo: 296000, participants: 12600 }, rivals: ["L05", "L03", "g08", "g19"] },
+  g06: { goalNew: 9000,  gray: { days: 21, expo: 152000, participants: 3100 },  rivals: ["L07", "L01", "g15"] },
+  g07: { goalNew: 15000, gray: { days: 28, expo: 138000, participants: 4200 },  rivals: ["L06", "L02", "g02"] },
+  g08: { goalNew: 21000, gray: { days: 21, expo: 234000, participants: 7400 },  rivals: ["L03", "g05", "g21"] },
+  g09: { goalNew: 12000, gray: { days: 21, expo: 196000, participants: 5200 },  rivals: ["L02", "L01", "g01", "g20"] },
+  g10: { goalNew: 9500,  gray: { days: 21, expo: 124000, participants: 2600 },  rivals: ["L04", "g04", "g18"] },
+  g11: { goalNew: 8000,  gray: { days: 21, expo: 158000, participants: 3100 },  rivals: ["L05", "g19", "g17"] },
+  g12: { goalNew: 24000, gray: { days: 21, expo: 268000, participants: 8600 },  rivals: ["L08", "L03", "g03", "g17"] },
+  g13: { goalNew: 8500,  gray: { days: 21, expo: 112000, participants: 1900 },  rivals: ["L04", "L06", "g04"] },
+  g14: { goalNew: 17000, gray: { days: 21, expo: 186000, participants: 4600 },  rivals: ["L04", "g04", "g18"] },
+  g15: { goalNew: 8500,  gray: { days: 21, expo: 132000, participants: 2400 },  rivals: ["L07", "g06", "g20"] },
+  g16: { goalNew: 16000, gray: { days: 21, expo: 168000, participants: 4000 },  rivals: ["L06", "g02", "g07"] },
+  g17: { goalNew: 22000, gray: { days: 28, expo: 246000, participants: 9600 },  rivals: ["L08", "L03", "g03"] },
+  g18: { goalNew: 10500, gray: { days: 21, expo: 128000, participants: 2700 },  rivals: ["L04", "g04", "g10"] },
+  g19: { goalNew: 16000, gray: { days: 21, expo: 178000, participants: 5600 },  rivals: ["L05", "L03", "g05", "g11"] },
+  g20: { goalNew: 7500,  gray: { days: 21, expo: 108000, participants: 1700 },  rivals: ["L01", "L02", "g09"] },
+  g21: { goalNew: 12500, gray: { days: 21, expo: 146000, participants: 3500 },  rivals: ["L03", "g08", "g05"] }
+};

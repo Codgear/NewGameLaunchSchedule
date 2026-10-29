@@ -7,8 +7,11 @@ const FIRST_WED = (() => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 })();
 
+const audInput = (id) => AUDIENCE_INPUT[id] || { goalNew: 0, rivals: [], gray: null };
+const rivalName = (id) => (LIVE_GAMES.find(g => g.id === id) || GAMEPLAY_POOL.find(g => g.id === id) || { name: id }).name;
+
 const state = {
-  games: GAMEPLAY_POOL.map(g => ({ ...g, picked: true })),
+  games: GAMEPLAY_POOL.map(g => ({ ...g, picked: true, goalNew: audInput(g.id).goalNew })),
   share: 22,
   launchDate: FIRST_WED,   // 首个上架周三
   weeks: 4,                // 规划周数
@@ -85,6 +88,7 @@ function renderGames() {
     const newP = g.expo * g.cvrDownload * g.cvrJoin;
     const bad = g.readiness < MODEL.CFG.MIN_READINESS;
     const cap = MODEL.capOf(g);
+    const ai = audInput(g.id);
     const natural = newP * DAY_EQ;                       // 无稀释无倾轧的 14 天自然产出
     const capRatio = isFinite(cap) ? cap / Math.max(1, natural) : 0;
     const capTag = !isFinite(cap) ? `<span class="cap-tag">不设上限</span>`
@@ -114,6 +118,13 @@ function renderGames() {
         <span>14 天自然产出 <b>${fmt(natural)}</b></span>
         ${capTag}
       </div>
+      <div class="g-aud">
+        <div class="g-in"><label>周期获客目标</label><input type="number" data-f="goalNew" value="${g.goalNew || 0}" step="5000" /></div>
+        <div class="g-audinfo">
+          <span>灰度参与 <b>${ai.gray ? fmt(ai.gray.participants) : "—"}</b></span>
+          <span class="gr">竞品 ${ai.rivals.length ? ai.rivals.map(rivalName).join(" · ") : "未标注"}</span>
+        </div>
+      </div>
     </div>`;
   }).join("");
   $("#pickedCount").textContent = state.games.filter(g => g.picked).length;
@@ -139,22 +150,64 @@ function renderMatrix() {
   m.style.gridTemplateColumns = `86px repeat(${list.length}, 38px)`;
   m.innerHTML = html;
 }
+/* ---------- 人群名单层 ---------- */
+let UNI = null;
+function getUniverse() {
+  if (!UNI) {
+    UNI = AUD_MODEL.buildUniverse({
+      games: GAMEPLAY_POOL, liveGames: LIVE_GAMES, types: TYPES, layers: SNAPSHOT.layers,
+      universeN: AUDIENCE.universeN, mauTotal: AUDIENCE.mauTotal, seed: 20261104
+    });
+  }
+  return UNI;
+}
+
+function computeAudience(res, ctx) {
+  const U = getUniverse();
+  const liveIds = LIVE_GAMES.map(g => g.id);
+  const profs = ctx.games.map(g => AUD_MODEL.profile(U, g, audInput(g.id), liveIds));
+  const byId = {};
+  profs.forEach(p => (byId[p.game.id] = p));
+  const batch = res.best.weeks[0] ? res.best.weeks[0].batch : [];
+  const batchProfs = batch.map(g => byId[g.id]).filter(Boolean);
+  const union = new Uint8Array(U.n);
+  batchProfs.forEach(p => { for (let i = 0; i < U.n; i++) if (p.mask[i]) union[i] = 1; });
+  const items = profs.map(p => {
+    const g = p.game;
+    const input = audInput(g.id);
+    const feas = AUD_MODEL.feasibility(U, p, g, input, batchProfs);
+    const cg = res.best.cumByGame[g.id];
+    return {
+      prof: p, feas, input,
+      inBatch: batch.some(x => x.id === g.id),
+      modelEff: cg ? cg.cum : 0
+    };
+  });
+  return {
+    U, profs, byId, batchProfs, items,
+    unionSize: AUD_MODEL.count(union) * U.scale,
+    summary: AUD_MODEL.universeSummary(U, LIVE_GAMES)
+  };
+}
+
 /* ---------- 运行模型 ---------- */
 function runModel() {
   const ctx = ctxNow();
   const comp = MODEL.buildCompMatrix(state.games, COMP_OVERRIDE, TYPES, SNAPSHOT.layers);
   const res = MODEL.solveZone(ctx, comp, state.launchDate);
-  state.result = { ctx, comp, res };
-  renderHero(ctx, res);
+  const aud = computeAudience(res, ctx);
+  state.result = { ctx, comp, res, aud };
+  renderHero(ctx, res, aud);
   drawCurve(res);
   renderWeeks(res);
   renderCaps(res);
+  renderAudience(aud);
   renderFunnel(res);
   renderGantt(res);
 }
 
 /* ---------- 结果：KPI ---------- */
-function renderHero(ctx, res) {
+function renderHero(ctx, res, aud) {
   const b = res.best;
   const next = res.curve[b.X + 1] || null;
   const prev = b.X > 0 ? res.curve[b.X - 1] : null;
@@ -168,6 +221,12 @@ function renderHero(ctx, res) {
   $("#kpiCover").textContent = pct(b.coverage, 0);
   $("#kpiCapped").textContent = b.cappedGames.length ? b.cappedGames.length + " 个" : "0 个";
   $("#kpiCut").textContent = fmt(b.cappedEff || 0);
+
+  /* 名单层 KPI：首批批次潜在人群（去重）+ 获客目标达成数 */
+  const bItems = aud ? aud.items.filter(x => x.inBatch) : [];
+  const okN = bItems.filter(x => x.feas.goal > 0 && Math.min(x.modelEff, x.feas.capacity) >= x.feas.goal).length;
+  $("#kpiAudience").textContent = aud ? fmt(aud.unionSize) : "—";
+  $("#kpiGoal").textContent = bItems.length ? `${okN}/${bItems.length} 个` : "—";
 
   $("#heroDesc").innerHTML =
     `首个上架日 <b>${d0.getMonth() + 1}/${d0.getDate()} ${wd[d0.getDay()]} 10:00</b>，` +
@@ -211,6 +270,18 @@ function renderHero(ctx, res) {
     tips.push(`周期上限约束：<b>${b.cappedGames.length}</b> 个玩法累计新进已触顶（${top}${b.cappedGames.length > 3 ? " 等" : ""}），` +
       `再留在池中只占槽位与曝光，模型已改用未触顶玩法补位；合计被上限截掉 <span class="down">${fmt(b.cappedEff)}</span> 人。` +
       `若这些玩法的可触达人群/预算还能放大，上调其上限后最优节奏有继续抬升的空间。`);
+  }
+
+  if (bItems.length) {
+    const fails = bItems.filter(x => x.feas.goal > 0 && Math.min(x.modelEff, x.feas.capacity) < x.feas.goal);
+    if (fails.length) {
+      const f = fails[0];
+      tips.push(`获客目标：首批 ${bItems.length} 个玩法中 <b>${bItems.length - fails.length}</b> 个能在 14 天曝光期内达成周期获客目标；` +
+        `${fails.map(x => x.prof.game.name).slice(0, 3).join("、")}${fails.length > 3 ? " 等" : ""}存在缺口——` +
+        `潜在人群 ${fmt(f.prof.size)}（与已上线留存重叠 ${pct(f.prof.liveOverlap, 0)}）、名单口径上限 ${fmt(f.feas.capacity)} < 目标 ${fmt(f.feas.goal)}。`);
+    } else {
+      tips.push(`获客目标：首批 ${bItems.length} 个玩法在潜在人群规模与转化口径下均可达成周期获客目标。`);
+    }
   }
 
   $("#verdict").innerHTML = tips.map(t => "· " + t).join("<br/>");
@@ -400,6 +471,128 @@ function renderCaps(res) {
     `「14 天自然产出」= 日曝光 × 下载率 × 参与率 × 新鲜度折减后的 14 天等效天数（${((MODEL.F1 + MODEL.F2) * 7).toFixed(2)} 天），未计稀释与倾轧。`;
 }
 
+/* ---------- 结果：人群名单层 ---------- */
+function renderAudience(aud) {
+  const U = aud.U, sm = aud.summary;
+
+  /* ④ 名单基数 */
+  $("#audSummary").innerHTML = `
+    <div class="aud-stat"><span>大盘近 3 个月 MAU</span><b>${fmt(sm.mau)}</b><em>名单 ${fmt(AUDIENCE.universeN)} 样本 × ${U.scale.toFixed(2)}</em></div>
+    <div class="aud-stat"><span>目标周期活跃</span><b>${fmt(sm.win)}</b><em>占 MAU ${pct(sm.winRate, 0)}</em></div>
+    <div class="aud-stat"><span>已上线留存玩家（合计去重）</span><b>${fmt(sm.liveRetained)}</b><em>覆盖 MAU ${pct(sm.liveCoverage, 0)}</em></div>`;
+
+  const typeColor = (k) => (TYPES.find(t => t.key === k) || TYPES[0]).color;
+  $("#audLiveList").innerHTML = sm.live.map(l => `
+    <div class="aud-live-row">
+      <i style="background:${typeColor(l.type)}"></i>
+      <span class="nm">${l.name}</span>
+      <span class="c">留存 <b>${fmt(l.retained)}</b></span>
+      <span class="c">占 MAU ${pct(l.shareOfMau, 1)}</span>
+      <span class="bar"><i style="width:${(l.retainRate * 100).toFixed(0)}%"></i></span>
+      <span class="c dim">留存率 ${pct(l.retainRate, 0)}</span>
+    </div>`).join("");
+
+  $("#audNote").textContent = `口径：大盘名单 = 近 3 个月月活（去重），目标周期名单 = 规划 ${state.weeks} 周内有活跃行为的玩家，存量名单 = 已上线玩法近 14 天活跃的留存玩家。名单规模 = 位图命中数 × 放大系数（${U.scale.toFixed(2)}）。`;
+
+  /* ⑤ 潜在人群名单 */
+  const list = aud.items.slice().sort((a, b) => b.prof.size - a.prof.size);
+  if (!list.length) {
+    $("#audList").innerHTML = `<p class="hint">没有勾选的候选玩法。</p>`;
+    $("#audListNote").textContent = "";
+  } else {
+    const maxSize = Math.max(...list.map(x => x.prof.size), 1);
+    $("#audList").innerHTML = `
+      <div class="aud-row head">
+        <span>玩法</span><span class="c">潜在人群规模</span><span class="c">占 MAU</span>
+        <span class="c">与目标周期重叠</span><span class="c">与已上线留存重叠</span>
+        <span class="c">纯新增</span><span class="c">竞品覆盖</span><span class="c">灰度参与</span><span class="c">竞品标注</span>
+      </div>` + list.map(x => {
+      const p = x.prof, g = p.game;
+      const gray = x.input.gray;
+      return `<div class="aud-row${x.inBatch ? " in" : ""}">
+        <span class="an"><i style="background:${g.typeColor}"></i>${g.name}<em>${g.typeName}</em></span>
+        <span class="c strong">${fmt(p.size)}<i class="mini-bar"><i style="width:${(p.size / maxSize * 100).toFixed(0)}%"></i></i></span>
+        <span class="c">${pct(p.shareOfMau, 1)}</span>
+        <span class="c">${pct(p.winOverlap, 0)}</span>
+        <span class="c">${pct(p.liveOverlap, 0)}</span>
+        <span class="c up">${pct(p.pureNewRate, 0)}</span>
+        <span class="c ${p.rivalOverlap > 0.5 ? "down" : ""}">${pct(p.rivalOverlap, 0)}</span>
+        <span class="c dim">${gray ? fmt(gray.participants) : "—"}</span>
+        <span class="c dim">${p.rivals.length ? p.rivals.map(rivalName).join(" · ") : "无标注"}</span>
+      </div>`;
+    }).join("");
+    const total = MODEL.sum(list.map(x => x.prof.size));
+    $("#audListNote").innerHTML = `全部候选合计（含重复）${fmt(total)}；首批批次去重潜在人群 <b>${fmt(aud.unionSize)}</b>，` +
+      `占大盘 MAU ${pct(aud.unionSize / sm.mau, 1)}。「纯新增」= 潜在人群中不在任何已上线玩法的留存名单里（大盘新客 / 长期睡眠回流）。`;
+  }
+
+  /* ⑥ 同批重叠矩阵 + 获客目标 */
+  const bp = aud.batchProfs;
+  if (bp.length) {
+    let html = `<div class="h"></div>` + bp.map(x => `<div class="h">${x.game.name}</div>`).join("");
+    bp.forEach((a, i) => {
+      html += `<div class="h" style="justify-content:flex-end;padding-right:6px">${a.game.name}</div>`;
+      bp.forEach((b, j) => {
+        if (i === j) { html += `<div class="c" style="background:rgba(255,255,255,.05)">–</div>`; return; }
+        const jac = AUD_MODEL.jaccard(a.mask, b.mask);
+        const op = (0.10 + jac * 0.85).toFixed(2);
+        html += `<div class="c" style="background:${jac > 0.5 ? `rgba(255,107,138,${op})` : `rgba(79,195,247,${op})`}">${(jac * 100).toFixed(0)}%</div>`;
+      });
+    });
+    const mm = $("#batchOverlap");
+    mm.style.gridTemplateColumns = `86px repeat(${bp.length}, 64px)`;
+    mm.innerHTML = html;
+  } else {
+    $("#batchOverlap").innerHTML = `<p class="hint">首批批次为空，无重叠矩阵。</p>`;
+  }
+
+  const batchItems = aud.items.filter(x => x.inBatch)
+    .sort((a, b) => (a.feas.rate == null ? 9 : a.feas.rate) - (b.feas.rate == null ? 9 : b.feas.rate));
+  if (!batchItems.length) {
+    $("#goalList").innerHTML = `<p class="hint">首批批次为空。</p>`;
+    $("#goalNote").textContent = "";
+    return;
+  }
+  const rows = batchItems.map(x => {
+    const f = x.feas, p = x.prof, g = p.game;
+    const rate = f.goal > 0 ? f.rate : null;
+    const ok = rate != null && rate >= 1;
+    const col = ok ? "#3ddc97" : rate > 0.7 ? "#f7b955" : "#ff6b8a";
+    let blocker = "—";
+    if (rate != null && !ok) {
+      if (f.capacity < f.goal) {
+        blocker = f.rivalOverlap > 0.5 ? `竞品分流（与 ${p.rivals.slice(0, 2).map(rivalName).join("/")} 覆盖 ${pct(f.rivalOverlap, 0)}）`
+          : f.maxJac > 0.35 ? `同批内耗（与 ${f.maxWith} 重叠 ${pct(f.maxJac, 0)}）`
+            : `潜在人群规模不足（${fmt(p.size)}）`;
+      } else {
+        blocker = `曝光/排期不足：名单容量够，但 14 天专区排期只产出 ${fmt(x.modelEff)}`;
+      }
+    }
+    return `<div class="goal-row">
+      <span class="gn"><i style="background:${g.typeColor}"></i>${g.name}</span>
+      <span class="c">${fmt(f.goal)}</span>
+      <span class="c">${fmt(f.reachWin)}<em>×${pct(f.join, 0)}</em></span>
+      <span class="c">${fmt(f.capacity)}</span>
+      <span class="c strong">${fmt(x.modelEff)}</span>
+      <span class="c" style="color:${col}">${rate == null ? "—" : pct(Math.min(rate, 9.99), 0)}</span>
+      <span class="c"><i class="track"><i style="width:${Math.min(100, (rate || 0) * 100).toFixed(0)}%;background:${col}"></i></i></span>
+      <span class="gb ${ok ? "ok" : "no"}">${rate == null ? "未设目标" : ok ? "可达成" : "存在缺口"}</span>
+      <span class="bl">${blocker}</span>
+    </div>`;
+  }).join("");
+
+  $("#goalList").innerHTML = `
+    <div class="goal-row head">
+      <span>玩法</span><span class="c">获客目标</span><span class="c">名单口径可触达</span>
+      <span class="c">名单上限产出</span><span class="c strong">模型 14 天产出</span><span class="c">达成率</span>
+      <span class="c">进度</span><span class="gb">判定</span><span class="bl">卡点归因</span>
+    </div>${rows}`;
+
+  const okN = batchItems.filter(x => x.feas.rate != null && x.feas.rate >= 1).length;
+  $("#goalNote").innerHTML = `首批 ${batchItems.length} 个玩法中 <b>${okN}</b> 个可在 14 天曝光期内达成本周期获客目标。` +
+    `判定口径：取「模型排期产出」与「名单口径上限」的较小值 ÷ 获客目标；名单口径上限 = 潜在人群中目标周期活跃人数 × 灰度参与率 × (1 − ${AUD_MODEL.CFG.RIVAL_DISCOUNT} × 竞品覆盖) × (1 − ${AUD_MODEL.CFG.BATCH_DISCOUNT} × 同批最大重叠)。`;
+}
+
 /* ---------- 结果：漏斗（稳态周拆解） ---------- */
 function renderFunnel(res) {
   const b = res.best;
@@ -482,7 +675,7 @@ function bind() {
   });
   $("#btnRun").addEventListener("click", runModel);
   $("#btnReset").addEventListener("click", () => {
-    state.games = GAMEPLAY_POOL.map(g => ({ ...g, picked: true }));
+    state.games = GAMEPLAY_POOL.map(g => ({ ...g, picked: true, goalNew: audInput(g.id).goalNew }));
     state.share = 22; state.launchDate = FIRST_WED; state.weeks = 4; state.slotCap = 12; state.zoneExpo = 3.2;
     $("#launchDate").value = state.launchDate; $("#weeks").value = 4; $("#slotCap").value = 12; $("#zoneExpo").value = 3.2;
     renderDau(); renderGames(); renderMatrix(); runModel();
@@ -512,7 +705,7 @@ function bind() {
     const n = state.games.length + 1;
     state.games.push({
       id: "gx" + n, name: "新玩法 " + n, type: "pvp", quality: 0.7, readiness: 0.9,
-      expo: 500000, cvrDownload: 0.05, cvrJoin: 0.5, capNew: 120000,
+      expo: 500000, cvrDownload: 0.05, cvrJoin: 0.5, capNew: 120000, goalNew: 20000,
       tags: ["竞技", "快节奏"], picked: true
     });
     renderGames(); renderMatrix(); runModel();

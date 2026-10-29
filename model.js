@@ -22,6 +22,9 @@ const MODEL = (() => {
   const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
   const sum = (arr) => arr.reduce((a, b) => a + b, 0);
 
+  /* 单玩法「整个周期内的累计新进玩家数上限」：未填 = 不设上限 */
+  const capOf = (g) => (g && g.capNew != null && g.capNew > 0 ? g.capNew : Infinity);
+
   /* 受众重叠：类型在三分层上的活跃结构余弦相似度 */
   function typeOverlap(t1, t2, layers) {
     const a = typeActive(t1, layers), b = typeActive(t2, layers);
@@ -83,6 +86,7 @@ const MODEL = (() => {
         typeName: t.name, typeColor: t.color, typeIcon: t.icon,
         minPerNew: t.minPerNew, demand: t.demand,
         baseNew,
+        cap: capOf(g),
         load: (baseNew * t.minPerNew) / budgetMin,
         ready: g.readiness >= CFG.MIN_READINESS
       };
@@ -119,7 +123,7 @@ const MODEL = (() => {
       });
       const damp = 1 / (1 + CFG.GAMMA * pressure);
       const afterDil = g.baseNew * dilution;
-      const eff = afterDil * damp;
+      const eff = Math.min(afterDil * damp, capOf(g));   // 受周期累计上限约束
       return {
         ...g, pressure, damp, dilution,
         afterDil, effNew: eff,
@@ -261,11 +265,14 @@ const MODEL = (() => {
     return { ...ctx, slotCap, weeks, zoneExpo, maxBatch, F1, F2 };
   }
 
-  /* 某一周：本周批(batch) + 在池老批(elder)，算这一周的有效新进与拥挤情况 */
-  function evalWeek(batch, elder, ctx, comp) {
-    const pool = [...batch.map(g => ({ g, f: F1, batchIndex: g.__b })), ...elder.map(g => ({ g, f: F2 }))];
+  /* 某一周：本周批(batch) + 在池老批(elder)，算这一周的有效新进与拥挤情况
+   * used: { gameId: 该玩法在此前各周已累计的新进量 } —— 用于扣减「周期累计上限」 */
+  function evalWeek(batch, elder, ctx, comp, used) {
+    const pool = [...batch.map(g => ({ g, f: F1 })), ...elder.map(g => ({ g, f: F2 }))];
     if (!pool.length) {
-      return { effNew: 0, demand: 0, dil: 1, cannibal: 0, perGame: [], coverage: 0, coverageByType: {}, underPenalty: 0, gain: 0 };
+      return { effNew: 0, demand: 0, dil: 1, cannibal: 0, perGame: [], coverage: 0,
+        coverageByType: {}, underPenalty: 0, gain: 0, effDay: 0, elderEff: 0,
+        cappedEff: 0, cappedCount: 0 };
     }
     const demand = sum(pool.map(x => x.g.expo * x.f));
     const dil = Math.min(1, ctx.zoneExpo / (demand || 1));
@@ -281,23 +288,35 @@ const MODEL = (() => {
       });
       const damp = 1 / (1 + CFG.GAMMA * pressure);
       const afterDil = x.g.expo * x.f * dil * x.g.cvrDownload * x.g.cvrJoin;   // 日均
-      const eff = afterDil * damp;
+      const eff = afterDil * damp;                                            // 扣倾轧后日均
+      // —— 周期累计上限：曝光照旧占用专区，但触顶后不再产出新进
+      const cap = capOf(x.g);
+      const usedBefore = used ? (used[x.g.id] || 0) : 0;
+      const remain = Math.max(0, cap - usedBefore);
+      const effWeekRaw = eff * WEEK_DAYS;
+      const effWeek = Math.min(effWeekRaw, remain);
+      const cum = usedBefore + effWeek;
       return {
         ...x.g, f: x.f, ageWeek: x.f === F1 ? 1 : 2, isNew: x.f === F1,
-        pressure, damp, dilution: dil, afterDil, effNew: eff, effWeek: eff * WEEK_DAYS,
+        pressure, damp, dilution: dil, afterDil, effNew: eff,
+        effWeek, effWeekRaw, cap, usedBefore, remain, cum,
+        capRate: isFinite(cap) ? clamp(cum / cap, 0, 1) : 0,
+        capped: effWeekRaw > remain + 1e-9,
+        exhausted: remain <= 1e-9,
         cannibalRate: afterDil > 0 ? (afterDil - eff) / afterDil : 0,
         qualityW: 0.55 + 0.45 * x.g.quality
       };
     });
 
     const effDay = sum(perGame.map(x => x.effNew));
-    const effNew = effDay * WEEK_DAYS;                                        // 本周 7 天累计
-    const gain = sum(perGame.map(x => x.effNew * x.qualityW)) * WEEK_DAYS / ctx.unit;
+    const effNew = sum(perGame.map(x => x.effWeek));                          // 本周 7 天实际累计（受上限约束）
+    const cappedEff = sum(perGame.map(x => x.effWeekRaw - x.effWeek));        // 被上限截掉的量
+    const gain = sum(perGame.map(x => x.effWeek * x.qualityW)) / ctx.unit;
 
     const coverageByType = {};
     let under = 0;
     ctx.types.forEach(t => {
-      const serve = sum(perGame.filter(x => x.type === t.key).map(x => x.effNew * x.qualityW)) * WEEK_DAYS;
+      const serve = sum(perGame.filter(x => x.type === t.key).map(x => x.effWeek * x.qualityW));
       const target = ctx.dauTotal * t.demand * CFG.COVER_TARGET * WEEK_DAYS;
       const cover = target > 0 ? Math.min(1, serve / target) : 1;
       coverageByType[t.key] = { cover, serve, target, demand: t.demand, name: t.name, color: t.color };
@@ -311,20 +330,23 @@ const MODEL = (() => {
       cannibal: afterDilSum > 0 ? sum(newOnly.map(x => x.afterDil * x.cannibalRate)) / afterDilSum : 0,
       coverage: sum(ctx.types.map(t => coverageByType[t.key].demand * coverageByType[t.key].cover)),
       coverageByType, underPenalty: under * CFG.LAMBDA_UNDER, effDay,
+      cappedEff, cappedCount: perGame.filter(x => x.capped).length,
       elderEff: sum(perGame.filter(x => !x.isNew).map(x => x.effWeek))
     };
   }
 
-  /* 选本周批：在「在池老批」的约束下贪心选 X 个，使本周效用最大 */
-  function pickBatch(weekIndex, X, stock, elder, ctx, comp) {
+  /* 选本周批：在「在池老批」的约束下贪心选 X 个，使本周效用最大
+   * 已触顶（累计新进 = 周期上限）的玩法边际产出为 0，不会被继续选中 */
+  function pickBatch(weekIndex, X, stock, elder, ctx, comp, used) {
     const chosen = [];
     while (chosen.length < X) {
       let best = null, bestU = -Infinity;
-      let base = chosen.length ? evalWeek(chosen, elder, ctx, comp) : null;
+      let base = chosen.length ? evalWeek(chosen, elder, ctx, comp, used) : null;
       const baseU = base ? base.gain - base.underPenalty : 0;
       stock.forEach(g => {
         if (chosen.includes(g)) return;
-        const ev = evalWeek([...chosen, g], elder, ctx, comp);
+        if ((used && used[g.id] || 0) >= capOf(g) - 1e-9) return;   // 周期上限已用尽
+        const ev = evalWeek([...chosen, g], elder, ctx, comp, used);
         const u = ev.gain - ev.underPenalty;
         if (u > bestU + 1e-9) { bestU = u; best = g; }
       });
@@ -340,12 +362,14 @@ const MODEL = (() => {
     let stock = pool.slice();
     let elder = [];
     const weeks = [];
-    let totalEff = 0, totalGain = 0, totalUnder = 0, peakPool = 0, dilSum = 0, canSum = 0;
+    const used = {};        // 每个玩法在规划周期内已累计的新进量
+    const cumByGame = {};   // 每个玩法的周期累计 vs 上限
+    let totalEff = 0, totalGain = 0, totalUnder = 0, peakPool = 0, dilSum = 0, canSum = 0, cappedEff = 0;
 
     for (let w = 0; w < ctx.weeks; w++) {
-      const batch = pickBatch(w, X, stock, elder, ctx, comp);
+      const batch = pickBatch(w, X, stock, elder, ctx, comp, used);
       stock = stock.filter(g => !batch.includes(g));
-      const ev = evalWeek(batch, elder, ctx, comp);
+      const ev = evalWeek(batch, elder, ctx, comp, used);
       const d = weekDate(launchDate, w);
       weeks.push({
         index: w + 1, date: d, batch, elder: elder.slice(),
@@ -354,20 +378,40 @@ const MODEL = (() => {
         elderEff: ev.elderEff, demand: ev.demand, dil: ev.dil,
         cannibal: ev.cannibal, coverage: ev.coverage,
         coverageByType: ev.coverageByType, underPenalty: ev.underPenalty,
-        gain: ev.gain, perGame: ev.perGame, shortage: batch.length < X
+        gain: ev.gain, perGame: ev.perGame, shortage: batch.length < X,
+        cappedEff: ev.cappedEff, cappedCount: ev.cappedCount
+      });
+      // 结转累计量
+      ev.perGame.forEach(p => {
+        used[p.id] = p.cum;
+        const prev = cumByGame[p.id];
+        cumByGame[p.id] = {
+          id: p.id, name: p.name, typeName: p.typeName, typeIcon: p.typeIcon, typeColor: p.typeColor,
+          cap: p.cap, cum: p.cum, capRate: p.capRate,
+          natural: p.baseNew * (F1 + F2) * WEEK_DAYS,   // 无稀释、无倾轧时的 14 天自然产出
+          firstWeek: prev ? prev.firstWeek : w + 1,
+          hitWeek: p.capped ? (prev && prev.hitWeek ? prev.hitWeek : w + 1) : (prev ? prev.hitWeek : null),
+          capped: p.capped || (prev ? prev.capped : false),
+          touched: true
+        };
       });
       totalEff += ev.effNew; totalGain += ev.gain; totalUnder += ev.underPenalty;
+      cappedEff += ev.cappedEff;
       peakPool = Math.max(peakPool, batch.length + elder.length);
       dilSum += ev.dil; canSum += ev.cannibal;
       elder = batch;
     }
+    const cappedGames = Object.values(cumByGame)
+      .filter(c => isFinite(c.cap) && c.cum >= c.cap - 1e-6)
+      .sort((a, b) => b.capRate - a.capRate);
     return {
       X, weeks, totalTitles: sum(weeks.map(w => w.batch.length)),
       totalEff, gain: totalGain, underPenalty: totalUnder,
       utility: totalGain - totalUnder,
       peakPool, avgDil: dilSum / ctx.weeks, avgCannibal: canSum / ctx.weeks,
       coverage: weeks[weeks.length - 1] ? weeks[weeks.length - 1].coverage : 0,
-      shortages: weeks.filter(w => w.shortage).length
+      shortages: weeks.filter(w => w.shortage).length,
+      cumByGame, cappedGames, cappedEff
     };
   }
 
@@ -403,7 +447,7 @@ const MODEL = (() => {
   }
 
   return {
-    CFG, ZONE, F1, F2, freshness, weekDate, nextWednesday,
+    CFG, ZONE, F1, F2, WEEK_DAYS, freshness, weekDate, nextWednesday, capOf,
     competition, buildCompMatrix, typeActive, buildContext, buildZoneContext,
     evaluate, evalWeek, rollout, solveZone, solve, schedule, clamp, sum
   };

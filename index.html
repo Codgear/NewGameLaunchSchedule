@@ -86,7 +86,7 @@
       <!-- 4. 待上架玩法 -->
       <section class="card">
         <h2><i>04</i>待上架玩法池 <span class="tag-manual">手动录入</span></h2>
-        <p class="hint">每个玩法需录入「日曝光量 + 曝光→下载→参与 三层漏斗」，模型只把<strong>参与玩家</strong>计为新进。</p>
+        <p class="hint">每个玩法需录入「日曝光量 + 曝光→下载→参与 三层漏斗」，模型只把<strong>参与玩家</strong>计为新进；再录入「<strong>整个周期内的累计新进玩家数</strong>」作为硬上限——14 天曝光期内累计触顶后，该玩法后续曝光不再贡献新进，模型会改用未触顶的玩法补位（留空 = 不设上限）。</p>
         <div id="gameList" class="game-list"></div>
         <div class="pool-foot">
           <span>已选 <b id="pickedCount">0</b> / <span id="poolCount">0</span></span>
@@ -137,10 +137,18 @@
               <span>覆盖达成度</span>
               <b id="kpiCover">—</b>
             </div>
+            <div class="mini">
+              <span>触顶玩法</span>
+              <b id="kpiCapped">—</b>
+            </div>
+            <div class="mini">
+              <span>上限截断量</span>
+              <b id="kpiCut">—</b>
+            </div>
           </div>
         </div>
         <div class="verdict" id="verdict"></div>
-        <p class="hint">口径：有效新进只计「参与」玩家（曝光→下载→参与），7 天为周口径；倾轧损耗 = 同时在池的同类型/受众重叠玩法导致的分流；覆盖达成度 = 相对「每类玩法需求的 6% 由新内容承接」这一理想供给水平的实现比例。</p>
+        <p class="hint">口径：有效新进只计「参与」玩家（曝光→下载→参与），7 天为周口径；单玩法在规划周期内的累计新进不超过其<strong>周期上限</strong>，触顶后曝光照旧占用专区但不再转化；倾轧损耗 = 同时在池的同类型/受众重叠玩法导致的分流；覆盖达成度 = 相对「每类玩法需求的 6% 由新内容承接」这一理想供给水平的实现比例。</p>
       </section>
 
       <section class="card">
@@ -164,7 +172,13 @@
       </section>
 
       <section class="card">
-        <h2><i>③</i>稳态周三层漏斗（曝光 → 下载 → 参与）</h2>
+        <h2><i>③</i>单玩法周期累计新进 vs 上限</h2>
+        <div id="capList" class="cap-list"></div>
+        <p class="hint" id="capNote"></p>
+      </section>
+
+      <section class="card">
+        <h2><i>④</i>稳态周三层漏斗（曝光 → 下载 → 参与）</h2>
         <div class="funnel-wrap">
           <div class="funnel-sum" id="funnelSum"></div>
           <div class="funnel-bars" id="funnelBars"></div>
@@ -172,7 +186,7 @@
       </section>
 
       <section class="card">
-        <h2><i>④</i>专区在池甘特（14 天留存退池）</h2>
+        <h2><i>⑤</i>专区在池甘特（14 天留存退池）</h2>
         <div id="timeline"></div>
         <p class="hint">实心 = 上架首周（全量曝光）；浅色 = 在池第 2 周（新鲜度衰减，第 14 天退池）。每周三新批与上周批同时在线，倾轧就发生在这 7 天重叠期。</p>
       </section>
@@ -182,7 +196,7 @@
 
   <footer class="foot">
     目标函数 max Σ<sub>周</sub>&nbsp;[&nbsp;Σ 有效新进 × 品质权重 − λ · 覆盖缺口惩罚&nbsp;] &nbsp;|&nbsp;
-    约束：本周批 + 上周批 ≤ 专区槽位、单周曝光需求 ≤ 专区曝光池、14 天到期退池
+    约束：本周批 + 上周批 ≤ 专区槽位、单周曝光需求 ≤ 专区曝光池、14 天到期退池、<b>单玩法周期累计新进 ≤ 其上限</b>
     <br/>Demo · 数据为模拟数据（真实接入：DAU/分层/打标由数仓返回，玩法与漏斗由使用者录入）· 求解：按周滚动贪心 + 局部交换
   </footer>
 </div>

@@ -79,10 +79,17 @@ function renderTypes() {
 
 /* ---------- 渲染：玩法池 ---------- */
 function renderGames() {
+  const DAY_EQ = (MODEL.F1 + MODEL.F2) * 7;   // 14 天新鲜度折减后的等效天数
   $("#gameList").innerHTML = state.games.map(g => {
     const t = TYPES.find(x => x.key === g.type);
     const newP = g.expo * g.cvrDownload * g.cvrJoin;
     const bad = g.readiness < MODEL.CFG.MIN_READINESS;
+    const cap = MODEL.capOf(g);
+    const natural = newP * DAY_EQ;                       // 无稀释无倾轧的 14 天自然产出
+    const capRatio = isFinite(cap) ? cap / Math.max(1, natural) : 0;
+    const capTag = !isFinite(cap) ? `<span class="cap-tag">不设上限</span>`
+      : capRatio < 0.85 ? `<span class="cap-tag tight">上限仅为自然产出 ${pct(capRatio, 0)}</span>`
+      : `<span class="cap-tag">上限 = 自然产出 ${pct(capRatio, 0)}</span>`;
     return `<div class="game ${g.picked ? "on" : "off"}" data-id="${g.id}">
       <div class="game-top">
         <input type="checkbox" ${g.picked ? "checked" : ""} data-act="pick" />
@@ -95,12 +102,17 @@ function renderGames() {
         <div class="g-in"><label>日曝光</label><input type="number" data-f="expo" value="${g.expo}" step="10000" /></div>
         <div class="g-in"><label>曝光→下载</label><input type="number" data-f="cvrDownload" value="${g.cvrDownload}" step="0.001" /></div>
         <div class="g-in"><label>下载→参与</label><input type="number" data-f="cvrJoin" value="${g.cvrJoin}" step="0.01" /></div>
+        <div class="g-in"><label>周期累计新进上限</label><input type="number" data-f="capNew" value="${isFinite(cap) ? cap : ""}" step="5000" placeholder="不限" /></div>
       </div>
       <div class="g-result">
         有效新进 <b>${fmt(newP)}</b>/日
         <span class="g-funnel">
           <em>${fmt(g.expo)}</em>→<em>${fmt(g.expo * g.cvrDownload)}</em>→<em>${fmt(newP)}</em>
         </span>
+      </div>
+      <div class="g-cap">
+        <span>14 天自然产出 <b>${fmt(natural)}</b></span>
+        ${capTag}
       </div>
     </div>`;
   }).join("");
@@ -136,6 +148,7 @@ function runModel() {
   renderHero(ctx, res);
   drawCurve(res);
   renderWeeks(res);
+  renderCaps(res);
   renderFunnel(res);
   renderGantt(res);
 }
@@ -153,12 +166,17 @@ function renderHero(ctx, res) {
   $("#kpiPool").textContent = b.peakPool;
   $("#kpiCannibal").textContent = pct(b.avgCannibal, 0);
   $("#kpiCover").textContent = pct(b.coverage, 0);
+  $("#kpiCapped").textContent = b.cappedGames.length ? b.cappedGames.length + " 个" : "0 个";
+  $("#kpiCut").textContent = fmt(b.cappedEff || 0);
 
   $("#heroDesc").innerHTML =
     `首个上架日 <b>${d0.getMonth() + 1}/${d0.getDate()} ${wd[d0.getDay()]} 10:00</b>，` +
     `按 7 天节奏连排 <b>${ctx.weeks}</b> 周、每周 <b>${b.X}</b> 个（共 ${b.totalTitles} 个）；` +
     `每批在专区曝光 14 天后退池，同时在池峰值 <b>${b.peakPool}</b> 个（槽位 ${ctx.slotCap}）。` +
-    `${ctx.weeks} 周累计有效新进 <b>${fmt(b.totalEff)}</b> 人。`;
+    `${ctx.weeks} 周累计有效新进 <b>${fmt(b.totalEff)}</b> 人` +
+    (b.cappedGames.length
+      ? `，其中 <b>${b.cappedGames.length}</b> 个玩法已触顶各自周期累计上限（截掉 ${fmt(b.cappedEff)} 人）。`
+      : `。`);
 
   const tips = [];
 
@@ -167,7 +185,7 @@ function renderHero(ctx, res) {
     const perSlot = dEff / Math.max(1, next.totalTitles - b.totalTitles);
     tips.push(`每周再加 1 个：同时在池升到 <span class="down">${next.peakPool}</span> 个，` +
       `同池倾轧把平均损耗推到 ${pct(next.avgCannibal, 0)}、曝光稀释 ${pct(1 - next.avgDil, 0)}，` +
-      `新增位的边际产出${dEff >= 0 ? "仅 " + fmt(perSlot) : "转负（" + fmt(perSlot) + "）"}；` +
+      `新增位的边际产出${dEff >= 0 ? "仅 " : "转负（−"}${fmt(Math.abs(perSlot))}${dEff >= 0 ? "" : "）"}；` +
       `累计有效新进 ${fmt(next.totalEff)}（${dEff >= 0 ? "+" : "−"}${fmt(Math.abs(dEff))}），综合效用 ${b.utility.toFixed(1)} → <span class="down">${next.utility.toFixed(1)}</span>。`);
   } else {
     tips.push(`每周 ${b.X} 个已到可探索上限，更多批次只会摊薄单批曝光。`);
@@ -186,6 +204,13 @@ function renderHero(ctx, res) {
   if (b.shortages > 0) {
     const first = b.weeks.find(w => w.shortage);
     tips.push(`候选池库存仅 ${res.candidates} 个，第 ${first.index} 批起缺口 ${first.batch.length < b.X ? b.X - first.batch.length : 0} 个，需补充待上架玩法。`);
+  }
+  if (b.cappedGames.length) {
+    const top = b.cappedGames.slice(0, 3)
+      .map(c => `${c.name} ${fmt(c.cum)}/${fmt(c.cap)}`).join("、");
+    tips.push(`周期上限约束：<b>${b.cappedGames.length}</b> 个玩法累计新进已触顶（${top}${b.cappedGames.length > 3 ? " 等" : ""}），` +
+      `再留在池中只占槽位与曝光，模型已改用未触顶玩法补位；合计被上限截掉 <span class="down">${fmt(b.cappedEff)}</span> 人。` +
+      `若这些玩法的可触达人群/预算还能放大，上调其上限后最优节奏有继续抬升的空间。`);
   }
 
   $("#verdict").innerHTML = tips.map(t => "· " + t).join("<br/>");
@@ -283,7 +308,7 @@ function renderSensitivity() {
   const lo = run(0.7), hi = run(1.3);
   const base = state.result ? state.result.res.best.X : lo;
   $("#sensNote").textContent = (lo === hi)
-    ? `敏感度：专区曝光池 ±30% 区间内，最优节奏稳定在 ${lo} 个/周——当前瓶颈是槽位（${state.slotCap}）与候选池结构，而非曝光总量。`
+    ? `敏感度：专区曝光池 ±30% 区间内，最优节奏稳定在 ${lo} 个/周——当前瓶颈是槽位（${state.slotCap}）、单玩法周期上限与候选池结构，而非曝光总量。`
     : `敏感度：专区曝光池 −30% → 最优 ${lo} 个/周；+30% → 最优 ${hi} 个/周（基准 ${base} 个/周）。最优节奏随活跃规模与曝光资源动态漂移，不是固定值。`;
 }
 /* ---------- 结果：周批次推荐 ---------- */
@@ -296,17 +321,20 @@ function renderWeeks(res) {
   }
   $("#comboList").innerHTML = b.weeks.map(w => {
     const d = w.date;
-    const chip = (g, cls, extra) => `<span class="wk-chip ${cls}">
+    const capTxt = (pg) => (pg && isFinite(pg.cap)
+      ? ` · 累计 <b class="${pg.capped ? "cap-hit" : ""}">${fmt(pg.cum)}</b>/${fmt(pg.cap)}`
+      : "");
+    const chip = (g, cls, extra, pg) => `<span class="wk-chip ${cls}${pg && pg.capped ? " hit" : ""}">
         <b>${g.typeIcon} ${g.name}</b>
-        <em>${g.typeName}${extra}</em>
+        <em>${g.typeName}${extra}${capTxt(pg)}</em>
       </span>`;
     const newChips = w.batch.map(g => {
       const pg = w.perGame.find(x => x.id === g.id);
-      return chip(g, "new", ` · 本周新上 · 预估 ${fmt(pg ? pg.effWeek : 0)}/周`);
+      return chip(g, "new", ` · 本周新上 · ${fmt(pg ? pg.effWeek : 0)}/周`, pg);
     }).join("");
     const oldChips = w.elder.map(g => {
       const pg = w.perGame.find(x => x.id === g.id);
-      return chip(g, "old", ` · 在池第 2 周 · 残余 ${fmt(pg ? pg.effWeek : 0)}/周`);
+      return chip(g, "old", ` · 在池第 2 周 · ${fmt(pg ? pg.effWeek : 0)}/周`, pg);
     }).join("");
     const short = w.shortage ? `<span class="warn">库存不足 ${w.batch.length}/${b.X}</span>` : "";
     return `<div class="wk">
@@ -324,6 +352,52 @@ function renderWeeks(res) {
       </div>
     </div>`;
   }).join("");
+}
+
+/* ---------- 结果：单玩法周期累计 vs 上限 ---------- */
+function renderCaps(res) {
+  const b = res.best;
+  const list = Object.values(b.cumByGame || {})
+    .sort((x, y) => (y.capped - x.capped) || (y.capRate - x.capRate) || (y.cum - x.cum));
+  if (!list.length) {
+    $("#capList").innerHTML = `<p class="hint">上周批次后可看到每个玩法的周期累计新进与上限达成情况。</p>`;
+    $("#capNote").textContent = "";
+    return;
+  }
+  const num = (c) => (isFinite(c.cap) ? fmt(c.cap) : "不限");
+  const rows = list.map(c => {
+    const rate = isFinite(c.cap) ? c.capRate : 0;
+    const col = c.capped ? "#ff6b8a" : rate > 0.85 ? "#f7b955" : "#3ddc97";
+    return `<div class="cap-row">
+      <span class="cp-nm"><i style="background:${c.typeColor}"></i>${c.name}<em>${c.typeName}</em></span>
+      <span class="cp-c">第 ${c.firstWeek} 批</span>
+      <span class="cp-c">${fmt(c.natural)}</span>
+      <span class="cp-c">${num(c)}</span>
+      <span class="cp-c strong">${fmt(c.cum)}</span>
+      <span class="cp-bar">
+        <span class="track"><i style="width:${Math.min(100, rate * 100).toFixed(1)}%;background:${col}"></i></span>
+        <em style="color:${col}">${isFinite(c.cap) ? pct(rate, 0) : "—"}</em>
+      </span>
+      <span class="cp-tag ${c.capped ? "hit" : ""}">${c.capped ? (c.hitWeek ? `第 ${c.hitWeek} 批触顶` : "已触顶") : isFinite(c.cap) ? "未触顶" : "不设限"}</span>
+    </div>`;
+  }).join("");
+
+  const withCap = list.filter(c => isFinite(c.cap));
+  const sumCum = MODEL.sum(withCap.map(c => c.cum));
+  const sumCap = MODEL.sum(withCap.map(c => c.cap));
+  $("#capList").innerHTML = `
+    <div class="cap-row head">
+      <span>玩法</span><span class="cp-c">上架批次</span><span class="cp-c">14 天自然产出</span>
+      <span class="cp-c">周期上限</span><span class="cp-c strong">实得累计</span>
+      <span class="cp-bar">达成率</span><span class="cp-tag">状态</span>
+    </div>${rows}`;
+
+  $("#capNote").innerHTML = (withCap.length
+    ? `合计：${withCap.length} 个设了上限的玩法实得 <b>${fmt(sumCum)}</b> / 上限 <b>${fmt(sumCap)}</b>` +
+      `（整体达成 ${pct(sumCap ? sumCum / sumCap : 0, 0)}）；触顶 <b>${b.cappedGames.length}</b> 个，` +
+      `另有 ${fmt(b.cappedEff)} 人的产出因触顶被截掉（曝光仍在，只是不再转化为新进）。`
+    : `当前 ${list.length} 个在池玩法都未设周期累计上限（留空 = 不设限），新进只受曝光池、倾轧与覆盖需求约束。`) +
+    `「14 天自然产出」= 日曝光 × 下载率 × 参与率 × 新鲜度折减后的 14 天等效天数（${((MODEL.F1 + MODEL.F2) * 7).toFixed(2)} 天），未计稀释与倾轧。`;
 }
 
 /* ---------- 结果：漏斗（稳态周拆解） ---------- */
@@ -352,7 +426,7 @@ function renderFunnel(res) {
     { lab: "② 本周需求", v: demand, c: "#5c7cfa", note: `按新鲜度折减后（新批 ${MODEL.F1.toFixed(2)} / 老批 ${MODEL.F2.toFixed(2)}）` },
     { lab: "③ 下载/进入", v: dl, c: "#7c6cf5", note: "曝光→下载 " + pct(dl / Math.min(cap, demand), 1) },
     { lab: "④ 参与玩家", v: joinRaw, c: "#3ddc97", note: "下载→参与 " + pct(joinRaw / dl, 1) },
-    { lab: "⑤ 有效新进", v: eff, c: "#f7b955", note: "扣除曝光稀释与倾轧" }
+    { lab: "⑤ 有效新进", v: eff, c: "#f7b955", note: "扣除稀释、倾轧与上限截断" }
   ];
   $("#funnelBars").innerHTML = rows.map(r => `
     <div class="fb">
@@ -421,8 +495,15 @@ function bind() {
     if (e.target.dataset.act === "pick") {
       g.picked = e.target.checked;
     } else if (e.target.dataset.f) {
-      const v = parseFloat(e.target.value);
-      if (!isNaN(v)) g[e.target.dataset.f] = v;
+      const f = e.target.dataset.f;
+      const raw = String(e.target.value).trim();
+      if (f === "capNew") {
+        const v = parseFloat(raw);
+        g.capNew = raw === "" || isNaN(v) || v <= 0 ? null : v;   // 留空 = 不设上限
+      } else {
+        const v = parseFloat(raw);
+        if (!isNaN(v)) g[f] = v;
+      }
     }
     renderGames(); renderMatrix(); runModel();
   });
@@ -431,7 +512,8 @@ function bind() {
     const n = state.games.length + 1;
     state.games.push({
       id: "gx" + n, name: "新玩法 " + n, type: "pvp", quality: 0.7, readiness: 0.9,
-      expo: 500000, cvrDownload: 0.05, cvrJoin: 0.5, tags: ["竞技", "快节奏"], picked: true
+      expo: 500000, cvrDownload: 0.05, cvrJoin: 0.5, capNew: 120000,
+      tags: ["竞技", "快节奏"], picked: true
     });
     renderGames(); renderMatrix(); runModel();
   });

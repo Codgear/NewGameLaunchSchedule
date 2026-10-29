@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>新玩法上架节奏预估 Demo</title>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+<div class="app">
+
+  <!-- ======= 顶部 ======= -->
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">◆</div>
+      <div>
+        <h1>新玩法上架节奏预估</h1>
+        <p class="sub">Launch Pacing Estimator · 注意力预算 × 竞争图 × 需求覆盖 的联合寻优</p>
+      </div>
+    </div>
+    <div class="topbar-actions">
+      <div class="fetched" id="fetchedTag">数据同步中…</div>
+      <button class="btn ghost" id="btnReset">重置参数</button>
+      <button class="btn primary" id="btnRun">
+        <span class="dot"></span> 运行模型
+      </button>
+    </div>
+  </header>
+
+  <div class="layout">
+
+    <!-- ======= 左：入参 ======= -->
+    <aside class="panel inputs">
+
+      <!-- 1. 目标日期 -->
+      <section class="card">
+        <h2><i>01</i>目标上架日期 <span class="tag-manual">手动输入</span></h2>
+        <div class="row">
+          <label>首个上架日</label>
+          <input type="date" id="launchDate" />
+        </div>
+        <div class="row">
+          <label>排期窗口（天）</label>
+          <input type="number" id="windowDays" min="1" max="60" value="14" />
+        </div>
+        <div class="row">
+          <label>同簇最小间隔（天）</label>
+          <input type="number" id="minGap" min="1" max="30" value="5" />
+        </div>
+      </section>
+
+      <!-- 2. DAU -->
+      <section class="card">
+        <h2><i>02</i>近期 DAU 与注意力预算 <span class="tag-auto">自动获取</span></h2>
+        <div class="dau-hero">
+          <div class="dau-num" id="dauNum">—</div>
+          <div class="dau-cap">近 7 日去重 DAU · 已平滑节假日</div>
+        </div>
+        <div id="layerList" class="layer-list"></div>
+        <div class="budget-bar">
+          <div class="budget-head">
+            <span>新内容可争夺注意力池</span>
+            <b id="budgetVal">—</b>
+          </div>
+          <div class="budget-track"><div class="budget-fill" id="budgetFill"></div></div>
+          <div class="budget-foot">
+            <span>新内容份额</span>
+            <input type="range" id="shareRange" min="8" max="40" value="22" />
+            <b id="shareVal">22%</b>
+          </div>
+        </div>
+      </section>
+
+      <!-- 3. 类型活跃分层 -->
+      <section class="card">
+        <h2><i>03</i>各类型玩法活跃分层人数 <span class="tag-auto">自动获取</span></h2>
+        <div class="type-table" id="typeTable"></div>
+        <p class="hint">单元格为该类型在该分层的活跃人数（渗透率 × 分层 DAU），决定每个类型能吃到的注意力上限。</p>
+      </section>
+
+      <!-- 4. 待上架玩法 -->
+      <section class="card">
+        <h2><i>04</i>待上架玩法池 <span class="tag-manual">手动录入</span></h2>
+        <p class="hint">每个玩法需录入「日曝光量 + 曝光→下载→参与 三层漏斗」，模型只把<strong>参与玩家</strong>计为新进。</p>
+        <div id="gameList" class="game-list"></div>
+        <div class="pool-foot">
+          <span>已选 <b id="pickedCount">0</b> / <span id="poolCount">0</span></span>
+          <button class="btn tiny" id="btnAddGame">+ 新增玩法</button>
+        </div>
+      </section>
+
+      <!-- 5. 竞争关系 -->
+      <section class="card">
+        <h2><i>05</i>玩法竞争关系 <span class="tag-auto">打标自动读取</span></h2>
+        <p class="hint">由玩法标签向量 + 同类型判定自动生成竞争强度矩阵（1 = 完全互相倾轧）。</p>
+        <div class="matrix-wrap">
+          <div id="matrix" class="matrix"></div>
+        </div>
+        <div class="legend">
+          <span>低</span><i class="grad"></i><span>高</span>
+        </div>
+      </section>
+    </aside>
+
+    <!-- ======= 右：结果 ======= -->
+    <main class="panel outputs">
+
+      <section class="card hero-card">
+        <div class="hero-grid">
+          <div class="hero-main">
+            <p class="eyebrow">模型建议</p>
+            <div class="hero-kpi">
+              <span class="kpi-num" id="kpiCount">—</span>
+              <span class="kpi-unit">个新玩法</span>
+            </div>
+            <p class="hero-desc" id="heroDesc">等待运行模型…</p>
+          </div>
+          <div class="hero-side">
+            <div class="mini">
+              <span>有效新进 / 日</span>
+              <b id="kpiNew">—</b>
+            </div>
+            <div class="mini">
+              <span>注意力占用</span>
+              <b id="kpiLoad">—</b>
+            </div>
+            <div class="mini">
+              <span>平均倾轧损耗</span>
+              <b id="kpiCannibal">—</b>
+            </div>
+            <div class="mini">
+              <span>覆盖达成度</span>
+              <b id="kpiCover">—</b>
+            </div>
+          </div>
+        </div>
+        <div class="verdict" id="verdict"></div>
+        <p class="hint">口径：覆盖达成度 =「每类玩法日常需求的 20% 由新内容承接」的达成比例；注意力占用 = 组合占「新内容可争夺时长池」的比例；倾轧损耗 = 同类型/受众重叠导致的分流比例。</p>
+      </section>
+
+      <section class="card">
+        <h2><i>①</i>最优解搜索：为什么不是更多 / 不是更少</h2>
+        <div class="chart-wrap">
+          <canvas id="curveChart" height="240"></canvas>
+        </div>
+        <div class="chart-legend">
+          <span><i class="c1"></i>综合效用</span>
+          <span><i class="c2"></i>新增有效新进</span>
+          <span><i class="c3"></i>拥挤损耗 + 覆盖缺口</span>
+          <span class="opt-mark">▲ 最优点</span>
+        </div>
+        <p class="hint" id="curveNote"></p>
+        <p class="hint" id="sensNote"></p>
+      </section>
+
+      <section class="card">
+        <h2><i>②</i>推荐玩法组合</h2>
+        <div id="comboList" class="combo-list"></div>
+      </section>
+
+      <section class="card">
+        <h2><i>③</i>三层漏斗拆解（曝光 → 下载 → 参与）</h2>
+        <div class="funnel-wrap">
+          <div class="funnel-sum" id="funnelSum"></div>
+          <div class="funnel-bars" id="funnelBars"></div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2><i>④</i>上架节奏排期</h2>
+        <div class="timeline" id="timeline"></div>
+        <p class="hint">按竞争强度做图着色分批：同簇玩法不放在同一批，且间隔不小于设定的最小天数。</p>
+      </section>
+
+    </main>
+  </div>
+
+  <footer class="foot">
+    目标函数 max&nbsp;[&nbsp;Σ 有效新进 × 品质权重 − λ · 覆盖缺口惩罚&nbsp;] &nbsp;|&nbsp;
+    约束：Σ曝光 ≤ 曝光位池、Σ注意力时长 ≤ 新内容时长池、同簇竞争 ≤ 分批隔离
+    <br/>Demo · 数据为模拟数据（真实接入：DAU/分层/打标由数仓返回，玩法与漏斗由使用者录入）· 求解：贪心构造 + 局部交换
+  </footer>
+</div>
+
+<script src="data.js"></script>
+<script src="model.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
